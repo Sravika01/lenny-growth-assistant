@@ -15,9 +15,9 @@ app = FastAPI(
 )
 
 
-# --------------------------------------------------
+# ---------------------------------------------------------
 # CORS
-# --------------------------------------------------
+# ---------------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,32 +28,33 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         "https://lenny-growth-assistant-eight.vercel.app",
     ],
+    allow_origin_regex=r"https://lenny-growth-assistant-[a-z0-9-]+-sravika-s-projects\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# --------------------------------------------------
-# Create database tables when backend starts
-# --------------------------------------------------
+# ---------------------------------------------------------
+# Startup
+# ---------------------------------------------------------
 
 @app.on_event("startup")
 async def startup_event():
     await create_tables()
 
 
-# --------------------------------------------------
-# Routes
-# --------------------------------------------------
+# ---------------------------------------------------------
+# Routers
+# ---------------------------------------------------------
 
 app.include_router(sessions_router)
 app.include_router(chat_router)
 
 
-# --------------------------------------------------
+# ---------------------------------------------------------
 # Root
-# --------------------------------------------------
+# ---------------------------------------------------------
 
 @app.get("/")
 async def root():
@@ -62,13 +63,12 @@ async def root():
     }
 
 
-# --------------------------------------------------
-# Health Check
-# --------------------------------------------------
+# ---------------------------------------------------------
+# Health
+# ---------------------------------------------------------
 
 @app.get("/api/health")
 async def health():
-
     health_status = {
         "status": "ok",
         "database": "unknown",
@@ -77,10 +77,7 @@ async def health():
         "llm": "unknown",
     }
 
-    # --------------------------------------------------
-    # Database connection
-    # --------------------------------------------------
-
+    # Database health
     try:
         async with AsyncSessionLocal() as db:
             await db.execute(text("SELECT 1"))
@@ -91,10 +88,7 @@ async def health():
         health_status["database"] = "error"
         health_status["status"] = "degraded"
 
-    # --------------------------------------------------
-    # LLM
-    # --------------------------------------------------
-
+    # LLM health
     provider = settings.default_llm_provider.lower()
 
     if provider == "ollama":
@@ -111,7 +105,6 @@ async def health():
             health_status["llm"] = "ok"
 
         except Exception:
-
             health_status["ollama"] = "error"
             health_status["llm"] = "error"
             health_status["status"] = "degraded"
