@@ -6,7 +6,7 @@ from app.rag.embeddings import create_embedding
 
 
 TOP_K = 5
-MIN_SIMILARITY = 0.25
+MIN_SIMILARITY = 0.10
 
 
 async def retrieve_relevant_chunks(
@@ -14,8 +14,6 @@ async def retrieve_relevant_chunks(
     db: AsyncSession,
     top_k: int = TOP_K,
 ):
-    # User questions must use RETRIEVAL_QUERY.
-    # Transcript chunks were indexed using RETRIEVAL_DOCUMENT.
     query_embedding = create_embedding(
         query,
         task_type="RETRIEVAL_QUERY",
@@ -45,13 +43,21 @@ async def retrieve_relevant_chunks(
     chunks = []
 
     for chunk, score in result.all():
+        score = float(score)
+
+        print(
+            f"RAG retrieval: similarity={score:.4f}, "
+            f"episode={chunk.episode}, "
+            f"guest={chunk.guest}"
+        )
+
         if score < MIN_SIMILARITY:
             continue
 
         chunks.append(
             {
                 "content": chunk.content,
-                "similarity": float(score),
+                "similarity": score,
                 "source": {
                     "episode": chunk.episode,
                     "guest": chunk.guest,
