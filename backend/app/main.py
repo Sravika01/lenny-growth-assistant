@@ -5,7 +5,7 @@ import httpx
 
 from app.api.chat import router as chat_router
 from app.api.sessions import router as sessions_router
-from app.database import AsyncSessionLocal
+from app.database import AsyncSessionLocal, create_tables
 from app.config import settings
 
 
@@ -32,6 +32,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# --------------------------------------------------
+# Create database tables when backend starts
+# --------------------------------------------------
+
+@app.on_event("startup")
+async def startup_event():
+    await create_tables()
 
 
 # --------------------------------------------------
@@ -68,9 +77,9 @@ async def health():
         "llm": "unknown",
     }
 
-    # -----------------------------
-    # Database
-    # -----------------------------
+    # --------------------------------------------------
+    # Database connection
+    # --------------------------------------------------
 
     try:
         async with AsyncSessionLocal() as db:
@@ -82,9 +91,9 @@ async def health():
         health_status["database"] = "error"
         health_status["status"] = "degraded"
 
-    # -----------------------------
+    # --------------------------------------------------
     # LLM
-    # -----------------------------
+    # --------------------------------------------------
 
     provider = settings.default_llm_provider.lower()
 
@@ -112,6 +121,7 @@ async def health():
         if settings.gemini_api_key:
             health_status["ollama"] = "not_used"
             health_status["llm"] = "configured"
+
         else:
             health_status["llm"] = "not_configured"
             health_status["status"] = "degraded"
@@ -121,6 +131,7 @@ async def health():
         if settings.anthropic_api_key:
             health_status["ollama"] = "not_used"
             health_status["llm"] = "configured"
+
         else:
             health_status["llm"] = "not_configured"
             health_status["status"] = "degraded"
