@@ -16,16 +16,15 @@ def get_llm_provider(
     if provider == "ollama":
         return OllamaProvider()
 
-    if provider == "anthropic":
-
-        if not settings.anthropic_api_key:
+    if provider == "gemini":
+        if not settings.gemini_api_key:
             raise RuntimeError(
-                "ANTHROPIC_API_KEY is not configured."
+                "GEMINI_API_KEY is not configured."
             )
 
         return CloudProvider(
-            api_key=settings.anthropic_api_key,
-            model=settings.anthropic_model,
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_model,
         )
 
     raise RuntimeError(
