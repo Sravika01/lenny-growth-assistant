@@ -3,7 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import DOMPurify from "dompurify";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 type Source = {
   episode?: string;
@@ -63,13 +64,16 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [sources, setSources] = useState<Source[]>([]);
   const [artifact, setArtifact] = useState<Artifact | null>(null);
+  const [sessionError, setSessionError] = useState("");
 
   useEffect(() => {
     createNewSession();
   }, []);
 
-  async function createNewSession() {
+  async function createNewSession(): Promise<string | null> {
     try {
+      setSessionError("");
+
       const response = await fetch(`${API_URL}/api/sessions`, {
         method: "POST",
         headers: {
@@ -81,7 +85,9 @@ function App() {
       });
 
       if (!response.ok) {
-        throw new Error("Unable to create session");
+        throw new Error(
+          `Session creation failed: ${response.status}`
+        );
       }
 
       const data = await response.json();
@@ -90,19 +96,34 @@ function App() {
       setMessages([]);
       setSources([]);
       setArtifact(null);
+
+      return data.id;
     } catch (error) {
-      console.error(error);
+      console.error("Session creation error:", error);
+
+      setSessionError(
+        "Unable to connect to the backend. Please try again."
+      );
+
+      return null;
     }
   }
 
-  async function sendMessage(customMessage?: string) {
+  async function sendMessage(
+    customMessage?: string,
+    activeSessionId?: string
+  ) {
     const message = (customMessage ?? input).trim();
+    const currentSessionId = activeSessionId ?? sessionId;
 
-    if (!message || !sessionId || isLoading) {
+    if (!message || !currentSessionId || isLoading) {
       return;
     }
 
     setInput("");
+
+    setSources([]);
+    setArtifact(null);
 
     const userMessage: Message = {
       role: "user",
@@ -123,20 +144,33 @@ function App() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/api/chat/stream`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          message,
-          provider,
-        }),
-      });
+      const response = await fetch(
+        `${API_URL}/api/chat/stream`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            session_id: currentSessionId,
+            message,
+            provider,
+          }),
+        }
+      );
 
       if (!response.ok) {
-        throw new Error("Unable to send message");
+        const errorText = await response.text();
+
+        console.error(
+          "Chat request failed:",
+          response.status,
+          errorText
+        );
+
+        throw new Error(
+          `Unable to send message: ${response.status}`
+        );
       }
 
       if (!response.body) {
@@ -155,7 +189,9 @@ function App() {
           break;
         }
 
-        const chunk = decoder.decode(value, { stream: true });
+        const chunk = decoder.decode(value, {
+          stream: true,
+        });
 
         const events = chunk.split("\n\n");
 
@@ -164,7 +200,9 @@ function App() {
             continue;
           }
 
-          const rawData = event.replace(/^data:\s*/, "").trim();
+          const rawData = event
+            .replace(/^data:\s*/, "")
+            .trim();
 
           if (!rawData) {
             continue;
@@ -192,7 +230,10 @@ function App() {
               setSources(data.sources);
             }
 
-            if (data.artifacts && data.artifacts.length > 0) {
+            if (
+              data.artifacts &&
+              data.artifacts.length > 0
+            ) {
               setArtifact(data.artifacts[0]);
             }
 
@@ -200,21 +241,26 @@ function App() {
               throw new Error(data.error);
             }
           } catch (error) {
-            console.error("Stream parsing error:", error);
+            console.error(
+              "Stream parsing error:",
+              error
+            );
           }
         }
       }
     } catch (error) {
-      console.error(error);
+      console.error("Chat error:", error);
 
       setMessages((previous) => {
         const updated = [...previous];
 
-        updated[updated.length - 1] = {
-          role: "assistant",
-          content:
-            "Sorry, I couldn't complete that request. Please try again.",
-        };
+        if (updated.length > 0) {
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content:
+              "Sorry, I couldn't complete that request. Please try again.",
+          };
+        }
 
         return updated;
       });
@@ -223,13 +269,36 @@ function App() {
     }
   }
 
-  function handleSubmit(event: React.FormEvent) {
+  function handleSubmit(
+    event: React.FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
     sendMessage();
   }
 
-  function handlePrompt(text: string) {
-    sendMessage(text);
+  async function handlePrompt(text: string) {
+    if (isLoading) {
+      return;
+    }
+
+    let activeSessionId = sessionId;
+
+    /*
+     * IMPORTANT:
+     * If the initial session has not been created yet,
+     * create one first and then send the prompt.
+     */
+    if (!activeSessionId) {
+      activeSessionId = await createNewSession();
+    }
+
+    if (!activeSessionId) {
+      return;
+    }
+
+    setInput(text);
+
+    await sendMessage(text, activeSessionId);
   }
 
   function renderArtifact() {
@@ -253,13 +322,18 @@ function App() {
     }
 
     if (artifact.artifact_type === "html") {
-      const safeHtml = DOMPurify.sanitize(artifact.content, {
-        WHOLE_DOCUMENT: true,
-      });
+      const safeHtml = DOMPurify.sanitize(
+        artifact.content,
+        {
+          WHOLE_DOCUMENT: true,
+        }
+      );
 
       return (
         <iframe
-          title={artifact.title || "Generated artifact"}
+          title={
+            artifact.title || "Generated artifact"
+          }
           className="artifact-frame"
           sandbox="allow-scripts"
           srcDoc={safeHtml}
@@ -269,7 +343,9 @@ function App() {
 
     return (
       <div className="markdown-artifact">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+        >
           {artifact.content}
         </ReactMarkdown>
       </div>
@@ -278,13 +354,16 @@ function App() {
 
   return (
     <div className="app-shell">
+
       {/* SIDEBAR */}
+
       <aside className="sidebar">
         <div className="sidebar-logo">
           <span>✦</span>
         </div>
 
         <nav className="sidebar-nav">
+
           <button className="nav-item active">
             <span className="nav-icon">▣</span>
             <span>Chat</span>
@@ -304,6 +383,7 @@ function App() {
             <span className="nav-icon">⚙</span>
             <span>Settings</span>
           </button>
+
         </nav>
 
         <div className="sidebar-quote">
@@ -322,230 +402,396 @@ function App() {
       </aside>
 
       {/* MAIN */}
+
       <div className="main-area">
+
         {/* HEADER */}
+
         <header className="topbar">
+
           <div className="brand">
+
             <div className="brand-mark">
               <span>✦</span>
             </div>
 
             <div>
               <h1>
-                Lenny <span>Growth Assistant</span>
+                Lenny{" "}
+                <span>Growth Assistant</span>
               </h1>
 
-              <p>Ask. Learn. Build. Powered by Lenny's Podcast.</p>
+              <p>
+                Ask. Learn. Build. Powered by
+                Lenny's Podcast.
+              </p>
             </div>
+
           </div>
 
           <div className="header-actions">
+
             <div className="provider-select">
-              <span className="provider-icon">♙</span>
+
+              <span className="provider-icon">
+                ♙
+              </span>
 
               <select
                 value={provider}
-                onChange={(event) => setProvider(event.target.value)}
+                onChange={(event) =>
+                  setProvider(event.target.value)
+                }
               >
-                <option value="ollama">Ollama · Local</option>
-                <option value="anthropic">Anthropic · Cloud</option>
+                <option value="ollama">
+                  Ollama · Local
+                </option>
+
+                <option value="anthropic">
+                  Anthropic · Cloud
+                </option>
               </select>
 
-              <span className="select-arrow">⌄</span>
+              <span className="select-arrow">
+                ⌄
+              </span>
+
             </div>
 
             <button
               className="new-chat-button"
               onClick={createNewSession}
+              type="button"
             >
               <span>＋</span>
               New chat
             </button>
+
           </div>
+
         </header>
 
         {/* CONTENT */}
+
         <main className="content-area">
+
           {/* CHAT */}
+
           <section className="chat-panel">
+
             {messages.length === 0 ? (
+
               <div className="welcome-card">
+
                 <div className="welcome-badge">
                   <span>✦</span>
                   Welcome to
                 </div>
 
                 <h2>
-                  Lenny <span>Growth Assistant</span>
+                  Lenny{" "}
+                  <span>Growth Assistant</span>
                 </h2>
 
                 <p className="welcome-description">
-                  Ask product and growth questions from the podcast archive.
+                  Ask product and growth questions
+                  from the podcast archive.
                   <br />
-                  Get grounded answers, explore ideas, and generate content.
+                  Get grounded answers, explore
+                  ideas, and generate content.
                 </p>
 
+                {sessionError && (
+                  <div className="session-error">
+                    <span>{sessionError}</span>
+
+                    <button
+                      type="button"
+                      onClick={createNewSession}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                {/* QUICK PROMPTS */}
+
                 <div className="prompt-grid">
+
                   {quickPrompts.map((prompt) => (
                     <button
                       key={prompt.title}
+                      type="button"
                       className={`prompt-card ${prompt.className}`}
-                      onClick={() => handlePrompt(prompt.text)}
+                      onClick={() =>
+                        handlePrompt(prompt.text)
+                      }
+                      disabled={isLoading}
                     >
-                      <div className="prompt-icon">{prompt.icon}</div>
 
-                      <strong>{prompt.title}</strong>
+                      <div className="prompt-icon">
+                        {prompt.icon}
+                      </div>
 
-                      <span>“{prompt.text}”</span>
+                      <strong>
+                        {prompt.title}
+                      </strong>
+
+                      <span>
+                        “{prompt.text}”
+                      </span>
+
                     </button>
                   ))}
-                </div>
-              </div>
-            ) : (
-              <div className="messages-container">
-                {messages.map((message, index) => (
-                  <div
-                    key={message.id ?? index}
-                    className={`message-row ${
-                      message.role === "user"
-                        ? "user-row"
-                        : "assistant-row"
-                    }`}
-                  >
-                    {message.role === "assistant" && (
-                      <div className="assistant-avatar">✦</div>
-                    )}
 
+                </div>
+
+              </div>
+
+            ) : (
+
+              <div className="messages-container">
+
+                {messages.map(
+                  (message, index) => (
                     <div
-                      className={`message-bubble ${
+                      key={
+                        message.id ?? index
+                      }
+                      className={`message-row ${
                         message.role === "user"
-                          ? "user-bubble"
-                          : "assistant-bubble"
+                          ? "user-row"
+                          : "assistant-row"
                       }`}
                     >
-                      {message.role === "assistant" ? (
-                        <>
-                          {message.content ? (
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {message.content}
-                            </ReactMarkdown>
-                          ) : (
-                            <div className="thinking">
-                              <span></span>
-                              <span></span>
-                              <span></span>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        message.content
+
+                      {message.role ===
+                        "assistant" && (
+                        <div className="assistant-avatar">
+                          ✦
+                        </div>
                       )}
+
+                      <div
+                        className={`message-bubble ${
+                          message.role ===
+                          "user"
+                            ? "user-bubble"
+                            : "assistant-bubble"
+                        }`}
+                      >
+
+                        {message.role ===
+                        "assistant" ? (
+
+                          <>
+                            {message.content ? (
+
+                              <ReactMarkdown
+                                remarkPlugins={[
+                                  remarkGfm,
+                                ]}
+                              >
+                                {message.content}
+                              </ReactMarkdown>
+
+                            ) : (
+
+                              <div className="thinking">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                              </div>
+
+                            )}
+                          </>
+
+                        ) : (
+
+                          message.content
+
+                        )}
+
+                      </div>
+
                     </div>
-                  </div>
-                ))}
+                  )
+                )}
 
                 {sources.length > 0 && (
+
                   <div className="sources-box">
+
                     <div className="sources-title">
                       Sources from Lenny's Podcast
                     </div>
 
-                    {sources.slice(0, 5).map((source, index) => (
-                      <div className="source-item" key={index}>
-                        <span className="source-dot"></span>
+                    {sources
+                      .slice(0, 5)
+                      .map(
+                        (source, index) => (
+                          <div
+                            className="source-item"
+                            key={index}
+                          >
 
-                        <div>
-                          <strong>
-                            {source.episode || "Podcast Episode"}
-                          </strong>
+                            <span className="source-dot">
+                            </span>
 
-                          <span>
-                            {source.guest
-                              ? ` · ${source.guest}`
-                              : ""}
+                            <div>
 
-                            {source.timestamp
-                              ? ` · ${source.timestamp}`
-                              : source.topic
-                              ? ` · ${source.topic}`
-                              : ""}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
+                              <strong>
+                                {source.episode ||
+                                  "Podcast Episode"}
+                              </strong>
+
+                              <span>
+
+                                {source.guest
+                                  ? ` · ${source.guest}`
+                                  : ""}
+
+                                {source.timestamp
+                                  ? ` · ${source.timestamp}`
+                                  : source.topic
+                                  ? ` · ${source.topic}`
+                                  : ""}
+
+                              </span>
+
+                            </div>
+
+                          </div>
+                        )
+                      )}
+
                   </div>
+
                 )}
+
               </div>
+
             )}
 
             {/* COMPOSER */}
+
             <div className="composer-area">
+
               <form
                 className="composer"
                 onSubmit={handleSubmit}
               >
+
                 <textarea
                   value={input}
-                  onChange={(event) => setInput(event.target.value)}
+                  onChange={(event) =>
+                    setInput(event.target.value)
+                  }
                   onKeyDown={(event) => {
+
                     if (
                       event.key === "Enter" &&
                       !event.shiftKey
                     ) {
+
                       event.preventDefault();
-                      handleSubmit(event);
+
+                      handleSubmit(
+                        event as unknown as React.FormEvent<HTMLFormElement>
+                      );
+
                     }
+
                   }}
                   placeholder="Ask a question about product, growth, startups, or leadership..."
                   disabled={isLoading}
                 />
 
                 <div className="composer-bottom">
+
                   <div className="composer-status">
-                    <span className="green-dot"></span>
+
+                    <span className="green-dot">
+                    </span>
+
                     Using{" "}
                     {provider === "ollama"
                       ? "local Ollama"
                       : "Anthropic Cloud"}
+
                   </div>
 
                   <button
                     type="submit"
                     className="send-button"
-                    disabled={!input.trim() || isLoading}
+                    disabled={
+                      !input.trim() ||
+                      isLoading
+                    }
                   >
+
                     <span>➤</span>
-                    {isLoading ? "Thinking..." : "Send"}
-                    <small>⌘ ↵</small>
+
+                    {isLoading
+                      ? "Thinking..."
+                      : "Send"}
+
+                    <small>
+                      ⌘ ↵
+                    </small>
+
                   </button>
+
                 </div>
+
               </form>
 
               <div className="footer-note">
                 Lenny Growth Assistant · v1.0.0
               </div>
+
             </div>
+
           </section>
 
           {/* ARTIFACT */}
+
           <section className="artifact-panel">
+
             <div className="artifact-header">
+
               <div className="artifact-title-wrapper">
-                <div className="artifact-header-icon">▤</div>
+
+                <div className="artifact-header-icon">
+                  ▤
+                </div>
 
                 <div>
-                  <h2>Artifact Viewer</h2>
-                  <p>Generated content appears here.</p>
+
+                  <h2>
+                    Artifact Viewer
+                  </h2>
+
+                  <p>
+                    Generated content appears here.
+                  </p>
+
                 </div>
+
               </div>
+
             </div>
 
             <div className="artifact-content">
               {renderArtifact()}
             </div>
+
           </section>
+
         </main>
+
       </div>
+
     </div>
   );
 }
