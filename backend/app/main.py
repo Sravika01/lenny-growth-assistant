@@ -7,10 +7,12 @@ from app.api.sessions import router as sessions_router
 from app.database import AsyncSessionLocal
 from app.config import settings
 
+
 app = FastAPI(
     title="Lenny Growth Assistant API",
     version="1.0.0",
 )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +26,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.include_router(sessions_router)
 app.include_router(chat_router)
@@ -41,10 +44,12 @@ async def health():
     health_status = {
         "status": "ok",
         "database": "unknown",
-        "ollama": "unknown",
+        "ollama": "not_checked",
+        "llm_provider": settings.default_llm_provider,
+        "llm": "unknown",
     }
 
-    # Check PostgreSQL
+    # Check database
     try:
         async with AsyncSessionLocal() as db:
             await db.execute(text("SELECT 1"))
@@ -55,20 +60,36 @@ async def health():
         health_status["database"] = "error"
         health_status["status"] = "degraded"
 
-    # Check Ollama
-    try:
-        import httpx
+    # Check active LLM provider
+    if settings.default_llm_provider.lower() == "gemini":
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(
-                f"{settings.ollama_base_url}/api/tags"
-            )
+        # Ollama is not required when Gemini is active
+        health_status["ollama"] = "not_used"
 
-        response.raise_for_status()
-        health_status["ollama"] = "ok"
+        if settings.gemini_api_key:
+            health_status["llm"] = "configured"
+        else:
+            health_status["llm"] = "error"
+            health_status["status"] = "degraded"
 
-    except Exception:
-        health_status["ollama"] = "error"
-        health_status["status"] = "degraded"
+    elif settings.default_llm_provider.lower() == "ollama":
+
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    f"{settings.ollama_base_url}/api/tags"
+                )
+
+                response.raise_for_status()
+
+            health_status["ollama"] = "ok"
+            health_status["llm"] = "ok"
+
+        except Exception:
+            health_status["ollama"] = "error"
+            health_status["llm"] = "error"
+            health_status["status"] = "degraded"
 
     return health_status
