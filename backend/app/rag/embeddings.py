@@ -1,9 +1,15 @@
 from app.config import settings
 
 
-def create_embedding(text: str) -> list[float]:
+def create_embedding(
+    text: str,
+    task_type: str = "RETRIEVAL_DOCUMENT",
+) -> list[float]:
     if settings.default_llm_provider.lower() == "gemini":
-        return create_gemini_embedding(text)
+        return create_gemini_embedding(
+            text,
+            task_type=task_type,
+        )
 
     return create_local_embedding(text)
 
@@ -11,7 +17,10 @@ def create_embedding(text: str) -> list[float]:
 def create_local_embedding(text: str) -> list[float]:
     from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    model = SentenceTransformer(
+        "all-MiniLM-L6-v2"
+    )
+
     embedding = model.encode(
         text,
         normalize_embeddings=True,
@@ -20,7 +29,10 @@ def create_local_embedding(text: str) -> list[float]:
     return embedding.tolist()
 
 
-def create_gemini_embedding(text: str) -> list[float]:
+def create_gemini_embedding(
+    text: str,
+    task_type: str = "RETRIEVAL_DOCUMENT",
+) -> list[float]:
     from google import genai
     from google.genai import types
 
@@ -33,7 +45,7 @@ def create_gemini_embedding(text: str) -> list[float]:
         contents=text,
         config=types.EmbedContentConfig(
             output_dimensionality=384,
-            task_type="RETRIEVAL_DOCUMENT",
+            task_type=task_type,
         ),
     )
 

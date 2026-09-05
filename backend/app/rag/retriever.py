@@ -14,16 +14,28 @@ async def retrieve_relevant_chunks(
     db: AsyncSession,
     top_k: int = TOP_K,
 ):
-    query_embedding = create_embedding(query)
+    # User questions must use RETRIEVAL_QUERY.
+    # Transcript chunks were indexed using RETRIEVAL_DOCUMENT.
+    query_embedding = create_embedding(
+        query,
+        task_type="RETRIEVAL_QUERY",
+    )
 
-    similarity = 1 - TranscriptChunk.embedding.cosine_distance(query_embedding)
+    similarity = (
+        1
+        - TranscriptChunk.embedding.cosine_distance(
+            query_embedding
+        )
+    )
 
     statement = (
         select(
             TranscriptChunk,
             similarity.label("similarity"),
         )
-        .where(TranscriptChunk.embedding.is_not(None))
+        .where(
+            TranscriptChunk.embedding.is_not(None)
+        )
         .order_by(similarity.desc())
         .limit(top_k)
     )
